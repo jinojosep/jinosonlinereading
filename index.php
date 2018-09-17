@@ -1,5 +1,5 @@
 <?php
 
-echo "This is Jino's web application"
+echo "This is My web application"
 
 ?>
