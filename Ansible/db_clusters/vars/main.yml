@@ -1,0 +1,19 @@
+---
+#Change the required DB cluster value to true if needed to install else put it false
+install_postgresql_cluster: true
+install_mysql_cluster: true
+install_redis_cluster: true
+#Postgresql Cluster variables
+patroni_cluster_name: "postgres-cluster"  # specify the cluster name
+patroni_superuser_username: "postgres"
+patroni_superuser_password: "postgres-pass" # please change password
+patroni_replication_username: "replicator"
+patroni_replication_password: "replicatorpass" # please change password
+
+#MySQL Galera CLuster Variables
+mysql_cluster_name: test_mysql_cluster
+mysql_root_password: "mysql_root_password"
+
+#Redis Cluster variables
+redis_password: ''
+is_redis_password: "false"

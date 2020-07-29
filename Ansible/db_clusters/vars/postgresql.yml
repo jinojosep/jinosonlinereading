@@ -1,0 +1,182 @@
+---
+# patroni version latest or specific version
+patroni_install_version: "latest" 
+#'true' for enable synchronous database replication, 'false' for disable synchronous database replication
+synchronous_mode: 'false' 
+synchronous_mode_strict: 'false'
+
+# version for deploy etcd cluster
+etcd_ver: "v3.3.19" 
+# etcd data directory
+etcd_data_dir: "/var/lib/etcd"
+etcd_cluster_name: "etcd-{{ patroni_cluster_name }}" # ETCD_INITIAL_CLUSTER_TOKEN
+
+patroni_etcd_hosts: []
+
+# PostgreSQL variables
+postgresql_version: "11"
+postgresql_port: "5432"
+postgresql_encoding: "UTF8"       # for bootstrap only (initdb)
+postgresql_locale: "en_US.UTF-8"  # for bootstrap only (initdb)
+postgresql_data_checksums: 'true' # for bootstrap only (initdb)
+
+# (optional) list of users to be created (if not already exists)
+postgresql_users: 
+  - { name: "{{ patroni_replication_username }}", password: "{{ patroni_replication_password }}" }
+#  - { name: "", password: "" }
+
+postgresql_extensions: []
+#  - { ext: "pg_stat_statements", db: "" }
+ # postgresql parameters to bootstrap dcs (are parameters for example)
+postgresql_parameters:
+  - { option: "max_connections",                     value: "100"     }
+  - { option: "superuser_reserved_connections",      value: "5"       }
+  - { option: "max_locks_per_transaction",           value: "64"      } # raise this value (ex. 512) if you have queries that touch many different tables (partitioning)
+  - { option: "max_prepared_transactions",           value: "0"       }
+  - { option: "huge_pages",                          value: "try"     } # or "on" if you set "vm_nr_hugepages" in kernel parameters
+  - { option: "shared_buffers",                      value: "512MB"   } # please change this value
+  - { option: "work_mem",                            value: "128MB"   } # please change this value
+  - { option: "maintenance_work_mem",                value: "256MB"   } # please change this value
+  - { option: "effective_cache_size",                value: "4GB"     } # please change this value
+  - { option: "checkpoint_timeout",                  value: "15min"   }
+  - { option: "checkpoint_completion_target",        value: "0.9"     }
+  - { option: "min_wal_size",                        value: "2GB"     } # for PostgreSQL 9.5 and above (for 9.4 use "checkpoint_segments")
+  - { option: "max_wal_size",                        value: "4GB"     } # for PostgreSQL 9.5 and above (for 9.4 use "checkpoint_segments")
+  - { option: "wal_buffers",                         value: "32MB"    }
+  - { option: "default_statistics_target",           value: "1000"    }
+  - { option: "seq_page_cost",                       value: "1"       }
+  - { option: "random_page_cost",                    value: "4"       } # "1.1" for SSD storage. Also, if your databases fits in shared_buffers
+  - { option: "effective_io_concurrency",            value: "2"       } # "200" for SSD storage
+  - { option: "synchronous_commit",                  value: "on"      } # or 'off' if you can you lose single transactions in case of a crash
+  - { option: "autovacuum",                          value: "on"      } # never turn off the autovacuum!
+  - { option: "autovacuum_max_workers",              value: "5"       }
+  - { option: "autovacuum_vacuum_scale_factor",      value: "0.01"    }
+  - { option: "autovacuum_analyze_scale_factor",     value: "0.02"    }
+  - { option: "autovacuum_vacuum_cost_limit",        value: "200"     } # or 500/1000
+  - { option: "autovacuum_vacuum_cost_delay",        value: "20"      }
+  - { option: "autovacuum_naptime",                  value: "1s"      }
+  - { option: "max_files_per_process",               value: "4096"    }
+  - { option: "archive_mode",                        value: "on"      }
+  - { option: "archive_timeout",                     value: "1800s"   }
+  - { option: "archive_command",                     value: "cd ."    } # not doing anything yet with WAL-s
+  - { option: "wal_level",                           value: "replica" } # "replica" for PostgreSQL 9.6 and above (for 9.4, 9.5 use "hot_standby")
+  - { option: "wal_keep_segments",                   value: "130"     }
+  - { option: "max_wal_senders",                     value: "10"      }
+  - { option: "max_replication_slots",               value: "10"      }
+  - { option: "hot_standby",                         value: "on"      }
+  - { option: "wal_log_hints",                       value: "on"      }
+  - { option: "shared_preload_libraries",            value: "pg_stat_statements,auto_explain" }
+  - { option: "pg_stat_statements.max",              value: "10000"   }
+  - { option: "pg_stat_statements.track",            value: "all"     }
+  - { option: "pg_stat_statements.save",             value: "off"     }
+  - { option: "auto_explain.log_min_duration",       value: "10s"     } # 10 sec (by default). Decrease this value if necessary
+  - { option: "auto_explain.log_analyze",            value: "true"    }
+  - { option: "auto_explain.log_buffers",            value: "true"    }
+  - { option: "auto_explain.log_timing",             value: "false"   }
+  - { option: "auto_explain.log_triggers",           value: "true"    }
+  - { option: "auto_explain.log_verbose",            value: "true"    }
+  - { option: "auto_explain.log_nested_statements",  value: "true"    }
+  - { option: "track_io_timing",                     value: "on"      }
+  - { option: "log_lock_waits",                      value: "on"      }
+  - { option: "log_temp_files",                      value: "0"       }
+  - { option: "track_activities",                    value: "on"      }
+  - { option: "track_counts",                        value: "on"      }
+  - { option: "track_functions",                     value: "all"     }
+  - { option: "log_checkpoints",                     value: "on"      }
+  - { option: "logging_collector",                   value: "on"      }
+  - { option: "log_truncate_on_rotation",            value: "on"      }
+  - { option: "log_rotation_age",                    value: "1d"      }
+  - { option: "log_rotation_size",                   value: "0"       }
+  - { option: "log_line_prefix",                     value: "'%t [%p-%l] %r %q%u@%d '" }
+  - { option: "log_filename",                        value: "'postgresql-%a.log'"      }
+  - { option: "log_directory",                       value: "{{ postgresql_log_dir }}" }
+  - { option: "shared_preload_libraries",            value: "'timescaledb'"       }
+
+
+ # specify additional hosts that will be added to the pg_hba.conf
+postgresql_pg_hba:
+  - { type: "local", database: "all",       user: "postgres",  address: "",               method: "trust" } # "local=trust" required for ansible modules "postgresql_(user,db,ext)"
+  - { type: "local", database: "all",       user: "all",       address: "",               method: "peer"  }
+  - { type: "host",  database: "all",       user: "all",       address: "127.0.0.1/32",   method: "md5"   }
+  - { type: "host",  database: "all",       user: "all",       address: "::1/128",        method: "md5"   }
+# Extended patroni variables (optional)
+patroni_ttl: 30
+patroni_loop_wait: 10
+patroni_retry_timeout: 10
+patroni_maximum_lag_on_failover: 1048576
+patroni_master_start_timeout: 300
+
+patroni_postgresql_use_pg_rewind: 'true' # or 'false'
+# try to use pg_rewind on the former leader when it joins cluster as a replica.
+patroni_remove_data_directory_on_rewind_failure: 'false' # or 'true' (if use_pg_rewind: 'true')
+# avoid removing the data directory on an unsuccessful rewind
+# if 'true', Patroni will remove the PostgreSQL data directory and recreate the replica.
+patroni_remove_data_directory_on_diverged_timelines: 'false' # or 'true'
+# if 'true', Patroni will remove the PostgreSQL data directory and recreate the replica
+patroni_create_replica_methods:
+  - basebackup
+pgbackrest:
+  - { option: "command",    value: "/usr/bin/pgbackrest --stanza=<stanza_name> --delta restore" }
+  - { option: "keep_data",  value: "True" }
+  - { option: "no_params",  value: "True" }
+wal_e:
+  - { option: "command",    value: "patroni_wale_restore" }
+  - { option: "no_master",  value: "1" }
+  - { option: "envdir",     value: "/etc/wal_e/envdir" }
+  - { option: "use_iam",    value: "1" }
+basebackup:
+  - { option: "max-rate",   value: "100M" }
+  - { option: "checkpoint", value: "fast" }
+
+# PostgreSQL variables
+postgresql_cluster_name: "main"
+postgresql_data_dir: "/var/lib/postgresql/{{ postgresql_version }}/{{ postgresql_cluster_name }}"
+postgresql_conf_dir: "/etc/postgresql/{{ postgresql_version }}/{{ postgresql_cluster_name }}"
+postgresql_bin_dir: "/usr/lib/postgresql/{{ postgresql_version }}/bin"
+postgresql_log_dir: "/var/log/postgresql"
+postgresql_unix_socket_dir: "/var/run/postgresql"
+postgresql_pgpass: /var/lib/postgresql/.pgpass
+
+postgresql_version_terse: "{{ postgresql_version | replace('.', '') }}"
+
+# Repository
+apt_repository_keys:
+  - key: "https://www.postgresql.org/media/keys/ACCC4CF8.asc" # postgresql repository apt key
+apt_repository:
+  - repo: "deb http://apt.postgresql.org/pub/repos/apt/ {{ ansible_distribution_release }}-pgdg main" # postgresql apt repository
+  - repo: "ppa:timescale/timescaledb-ppa"
+# Packages (for apt repo)
+system_packages:
+  - python
+  - python-dev
+  - python-pip
+  - python-psycopg2
+  - python-setuptools
+  - python3
+  - python3-dev
+  - python3-psycopg2
+  - python3-setuptools
+  - python3-pip
+  - curl
+  - less
+  - gcc
+
+patroni_prerequisites:
+  - python
+  - python-dev
+  - python-pip
+  - python-psycopg2
+  - python-setuptools
+patroni_pip_package:
+  - python-etcd
+  - psycopg2-binary
+  - patroni
+
+postgresql_packages:
+  - timescaledb-postgresql-{{ postgresql_version }}
+  - postgresql-client-{{ postgresql_version }}
+  - postgresql-server-dev-{{ postgresql_version }}
+  - postgresql-contrib-{{ postgresql_version }}
+
+installation_method: "repo" #(default)"repo" or "file"
+patroni_installation_method: "pip"

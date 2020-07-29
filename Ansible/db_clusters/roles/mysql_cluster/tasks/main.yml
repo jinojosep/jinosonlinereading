@@ -1,0 +1,9 @@
+---
+- import_tasks: swap.yml
+  tags: add_swapfile
+
+- import_tasks: mysql-cluster.yml
+  tags: install_packages
+
+- import_tasks: cluser_status.yml
+  tags: cluster_status     

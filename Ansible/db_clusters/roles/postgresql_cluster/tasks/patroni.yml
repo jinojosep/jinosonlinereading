@@ -1,0 +1,316 @@
+---
+# Patroni install
+
+
+# installation_method: "repo" and patroni_installation_method: "pip"
+- block:
+      # default installation method from pip repo
+    - name: Patroni | Install patroni prerequisites packages
+      package:
+        name: "{{ item }}"
+        update_cache: yes
+        state: present
+      loop: "{{ patroni_prerequisites }}"      
+
+
+    - name: Patroni | install setuptools
+      pip:
+        name: setuptools
+        state: latest
+        executable: pip
+        extra_args: "--upgrade"
+        umask: "0022"
+      environment:
+        PATH: "{{ ansible_env.PATH }}:/usr/local/bin:/usr/bin"
+
+    - name: Patroni | install requirements
+      pip:
+        name: "{{ item }}"
+        executable: pip
+        umask: "0022"
+      environment:
+        PATH: "{{ ansible_env.PATH }}:{{ postgresql_bin_dir }}:/usr/local/bin:/usr/bin"
+      loop: "{{ patroni_pip_package }}"
+
+# Patroni configure
+
+- name: Patroni | generate conf file "/etc/patroni.yml"
+  template:
+    src: templates/patroni.yml.j2
+    dest: /etc/patroni.yml
+    owner: postgres
+    group: postgres
+    mode: 0640
+  tags: [ patroni, patroni_conf ]
+
+- block: # for add_pgnode.yml
+    - name: Patroni | prepare patroni.yml conf file (replace "name","listen","connect_address")
+      lineinfile:
+        path: /etc/patroni.yml
+        regexp: '{{ item.regexp }}'
+        line: '{{ item.line }}'
+        backrefs: yes
+      loop:
+       - { regexp: '^name:', line: 'name: {{ ansible_hostname }}' }
+       - { regexp: '^  listen: .*:8008$', line: '  listen: {{ hostvars[inventory_hostname].inventory_hostname }}:8008' }
+       - { regexp: '^  connect_address: .*:8008$', line: '  connect_address: {{ hostvars[inventory_hostname].inventory_hostname }}:8008' }
+       - { regexp: '^  listen: ((?!8008).)*$', line: '  listen: {{ hostvars[inventory_hostname].inventory_hostname }},127.0.0.1:{{ postgresql_port }}' }
+       - { regexp: '^  connect_address: ((?!8008).)*$', line: '  connect_address: {{ hostvars[inventory_hostname].inventory_hostname }}:{{ postgresql_port }}' }
+      loop_control:
+        label: "{{ item.line }}"
+  when: existing_pgcluster is defined and existing_pgcluster|bool
+  tags: [ patroni, patroni_conf ]
+
+- name: Patroni | copy systemd service file "/etc/systemd/system/patroni.service"
+  template:
+    src: templates/patroni.service.j2
+    dest: /etc/systemd/system/patroni.service
+    owner: postgres
+    group: postgres
+    mode: 0644
+  tags: [ patroni, patroni_conf, patroni_service ]
+
+- name: Patroni | Prepare PostgreSQL | create statistics directory (if not already exists)
+  file:
+    path: /var/lib/pgsql_stats_tmp
+    state: directory
+    mode: 01777
+  tags: [ patroni, pgsql_stats_tmp ]
+
+- name: Patroni | Prepare PostgreSQL | mount the statistics directory in memory (tmpfs)
+  mount:
+    path: /var/lib/pgsql_stats_tmp
+    src: tmpfs
+    fstype: tmpfs
+    opts: "size=1024m,uid=postgres,gid=postgres"
+    state: mounted
+  tags: [ patroni, pgsql_stats_tmp ]
+
+- name: Patroni | Prepare PostgreSQL | make sure the postgresql log directory "{{ postgresql_log_dir }}" exists
+  file:
+    path: "{{ postgresql_log_dir }}"
+    owner: postgres
+    group: postgres
+    state: directory
+    mode: 0700
+  tags: patroni
+
+
+- block:
+    - name: Patroni | Prepare PostgreSQL | make sure PostgreSQL data directory "{{ postgresql_data_dir }}" exists
+      file:
+        path: "{{ postgresql_data_dir }}"
+        owner: postgres
+        group: postgres
+        state: directory
+        mode: 0700
+
+        #    - name: Patroni | Prepare PostgreSQL | check that data directory "{{ postgresql_data_dir }}" is not initialized
+        #      stat:
+        #        path: "{{ postgresql_data_dir }}/PG_VERSION"
+        #      register: pgdata_initialized
+        #    - fail:
+        #        msg: "Whoops! data directory {{ postgresql_data_dir }} is already initialized"
+        #      when: pgdata_initialized.stat.exists
+        #      tags: [ patroni, patroni_check_init ]
+
+      # patroni bootstrap failure is possible if the postgresql config files are missing
+    - name: Patroni | Prepare PostgreSQL | make sure the postgresql config files exists
+      stat:
+        path: "{{ postgresql_conf_dir }}/postgresql.conf"
+      register: postgresql_conf
+
+    - name: Patroni | Prepare PostgreSQL | generate default postgresql config files
+      become: yes
+      become_user: postgres
+      command: "/usr/bin/pg_createcluster {{ postgresql_version }} {{ postgresql_cluster_name }} -d {{ postgresql_data_dir }} -p {{ postgresql_port }} -e {{ postgresql_encoding }} --locale {{ postgresql_locale }}"
+      register: pg_createcluster_result
+      failed_when: pg_createcluster_result.rc != 0
+      when: not postgresql_conf.stat.exists
+
+    - name: Patroni | Prepare PostgreSQL | make sure the data directory "{{ postgresql_data_dir }}" is empty on Master
+      file:
+        path: "{{ postgresql_data_dir }}"
+        state: "{{ item }}"
+        owner: postgres
+        group: postgres
+        mode: 0700
+      loop:
+        - absent
+        - directory
+      when: is_master == "true"
+  tags: patroni
+ # wheh postgresql NOT exists
+
+# start patroni on master
+- block:
+    - name: Patroni | start patroni service on the Master server
+      systemd:
+        daemon_reload: yes
+        name: patroni
+        state: restarted
+        enabled: yes
+
+    - name: Patroni | wait for port 8008 to become open on the host
+      wait_for:
+        port: 8008
+        host: "{{ hostvars[inventory_hostname]['inventory_hostname'] }}"
+        state: started
+        timeout: 120
+        delay: 10
+      ignore_errors: no
+
+    - name: Patroni | check PostgreSQL is started and accepting connections on Master
+      become: yes
+      become_user: postgres
+      command: "{{ postgresql_bin_dir }}/pg_isready -p {{ postgresql_port }}"
+      register: pg_isready_result
+      until: pg_isready_result.rc == 0
+      retries: 30
+      delay: 10
+      changed_when: false
+    - name: Patroni | Prepare PostgreSQL | make sure the user "{{ patroni_superuser_username }}" are present, and password does not differ from the specified
+      postgresql_user:
+        db: postgres
+        name: "{{ patroni_superuser_username }}"
+        password: "{{ patroni_superuser_password }}"
+        encrypted: yes
+        role_attr_flags: "SUPERUSER"
+        login_unix_socket: "{{ postgresql_unix_socket_dir }}"
+        port: "{{ postgresql_port }}"
+        state: present
+      become: yes
+      become_user: postgres
+  when: is_master == "true"
+  tags: [ patroni, patroni_start_master ]
+
+- name: Patroni | Prepare PostgreSQL | make sure the user "{{ patroni_replication_username }}" are present, and password does not differ from the specified
+  postgresql_user:
+    db: postgres
+    name: "{{ patroni_replication_username }}"
+    password: "{{ patroni_replication_password }}"
+    encrypted: yes
+    role_attr_flags: "LOGIN,REPLICATION"
+    login_unix_socket: "{{ postgresql_unix_socket_dir }}"
+    port: "{{ postgresql_port }}"
+    state: present
+  become: yes
+  become_user: postgres
+  when: is_master == "true"
+
+- block:
+    - name: Patroni | PostgreSQL Cluster status
+      become: yes
+      become_user: postgres
+      command: patronictl -c /etc/patroni.yml list
+      register: patronictl_result
+      environment:
+        PATH: "{{ ansible_env.PATH }}:/usr/bin:/usr/local/bin"
+      changed_when: false
+    - debug:
+        var: patronictl_result.stdout_lines
+  ignore_errors: yes
+  when: is_master == "true"
+  tags: patroni
+
+# pg_hba (using a templates/pg_hba.conf.j2)
+- block:
+    - name: Patroni | Prepare PostgreSQL | generate pg_hba.conf
+      template:
+        src: templates/pg_hba.conf.j2
+        dest: "{{ postgresql_conf_dir }}/pg_hba.conf"
+        owner: postgres
+        group: postgres
+        mode: 0640
+
+
+    - name: Patroni | Prepare PostgreSQL | reload for apply the pg_hba.conf
+      become: yes
+      become_user: postgres
+      command: "/usr/bin/pg_ctlcluster {{ postgresql_version }} {{ postgresql_cluster_name }} reload"
+      register: pg_ctlcluster_result
+      failed_when: pg_ctlcluster_result.rc != 0
+      when: is_master == "true"
+  when: existing_pgcluster is not defined or not existing_pgcluster|bool
+  tags: [ patroni, pg_hba_generate ]
+
+- block: # for add_pgnode.yml
+    - name: Patroni | Prepare PostgreSQL | fetch pg_hba.conf file from master
+      run_once: true
+      fetch:
+        src: "{{ postgresql_conf_dir }}/pg_hba.conf"
+        dest: files/pg_hba.conf
+        validate_checksum: yes
+        flat: yes
+      delegate_to: '{{ groups.master[0] }}'
+
+    - name: Patroni | Prepare PostgreSQL | copy pg_hba.conf file to replica
+      copy:
+        src: files/pg_hba.conf
+        dest: "{{ postgresql_conf_dir }}/pg_hba.conf"
+        owner: postgres
+        group: postgres
+        mode: 0640
+  when: existing_pgcluster is defined and existing_pgcluster|bool
+  tags: [ patroni, pg_hba_generate ]
+
+# start patroni on replica
+- block:
+    - name: Patroni | Prepare PostgreSQL | make sure the data directory "{{ postgresql_data_dir }}" is empty on Replica
+      file:
+        path: "{{ postgresql_data_dir }}"
+        state: "{{ item }}"
+        owner: postgres
+        group: postgres
+        mode: 0700
+      loop:
+        - absent
+        - directory
+
+    - name: Patroni | start patroni service on Replica servers
+      systemd:
+        daemon_reload: yes
+        name: patroni
+        state: restarted
+        enabled: yes
+
+    - name: Patroni | wait for port 8008 to become open on the host
+      wait_for:
+        port: 8008
+        host: "{{ hostvars[inventory_hostname]['inventory_hostname'] }}"
+        state: started
+        timeout: 120
+        delay: 10
+      ignore_errors: no
+  when: is_master != "true"
+  tags: [patroni, patroni_start_replica]
+
+# disable postgresql from autostart
+- name: Patroni | turning off postgresql autostart from config "start.conf" (will be managed by patroni)
+  copy:
+    dest: "{{ postgresql_conf_dir }}/start.conf"
+    content: "manual"
+    owner: postgres
+    group: postgres
+    mode: 0644
+  tags: [ patroni, postgresql_disable ]
+
+- name: Patroni | disable "postgresql@{{ postgresql_version }}-{{ postgresql_cluster_name }}" service
+  systemd:
+    name: "postgresql@{{ postgresql_version }}-{{ postgresql_cluster_name }}"
+    enabled: no
+    daemon_reload: yes
+  tags: [ patroni, postgresql_disable ]
+
+- name: Patroni | add PATRONICTL_CONFIG_FILE environment variable into /etc/environment
+  lineinfile:
+    dest: "/etc/environment"
+    state: present
+    regexp: "^export PATRONICTL_CONFIG_FILE"
+    line: "export PATRONICTL_CONFIG_FILE=/etc/patroni.yml"
+    owner: root
+    group: root
+    mode: '0644'
+  ignore_errors: yes
+  tags: [ patroni, patroni_env ]
+

@@ -1,0 +1,67 @@
+---
+- name: install python2 on ubuntu 18.04 instances
+  hosts: "*"
+  gather_facts: false
+  tasks:
+    - name: run apt-get update and install python
+      raw: "{{ item }}"
+      loop:
+        - apt-get update
+        - apt-get -y install python
+      become: true
+
+- name: Deploy DB Clusters
+  hosts: postgres_cluster:etcd_cluster:mysql_cluster
+  become: true
+  become_method: sudo
+  gather_facts: true
+  any_errors_fatal: true
+  pre_tasks:
+    - import_tasks: hostname.yml
+      when: hostname is defined and hostname | length > 0
+      tags: hostname
+
+- name: Deploy PostgreSQL Clusters
+  hosts: postgres_cluster:etcd_cluster
+  become: true
+  become_method: sudo
+  gather_facts: true
+  any_errors_fatal: true      
+  vars_files:
+    - vars/main.yml
+    - vars/postgresql.yml
+  roles:
+    - name: Deploy PostgreSQL High-Availability Cluster (based on "Patroni" and "ETCD")
+      role: postgresql_cluster
+      when: install_postgresql_cluster|bool
+      tags: postgresql_cluster
+
+- name: Deploy MySQL Galera Clusters
+  hosts: mysql_cluster
+  become: true
+  become_method: sudo
+  gather_facts: true
+  any_errors_fatal: true
+  vars_files:
+    - vars/main.yml
+    - vars/mysql.yml
+  roles:      
+    - name: Deploy MySQL Galera High-Availability Multi-master Cluster
+      role: mysql_cluster 
+      when: install_mysql_cluster|bool
+      tags: mysql_cluster
+
+- name: Deploy Redis Sentinel Clusters
+  hosts: redis_cluster
+  become: true
+  become_method: sudo
+  gather_facts: true
+  any_errors_fatal: true
+  vars_files:
+    - vars/main.yml
+    - vars/redis.yml  
+  roles:      
+    - name: Deploy Redis Sentinel High-Availability Cluster
+      role: redis_cluster 
+      when: install_redis_cluster|bool
+      tags: redis_cluster

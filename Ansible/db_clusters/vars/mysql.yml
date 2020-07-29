@@ -1,0 +1,3 @@
+mysql_cluster_name: test_mysql_cluster
+swap_file: /swapfile
+swap_space: 512

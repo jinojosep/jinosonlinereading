@@ -1,0 +1,59 @@
+---
+
+# Install packages from files
+- block:
+    - name: copy packages into /tmp
+      copy:
+        src: '{{ item }}'
+        dest: /tmp/
+      loop: "{{ packages_from_file }}"
+      register: copy_packages_result
+
+    - name: Install packages
+      apt:
+        force_apt_get: yes
+        deb: '/tmp/{{ item }}'
+        state: present
+      loop: "{{ packages_from_file | map('basename') | list }}"
+      when: copy_packages_result.changed
+  when: packages_from_file is defined and packages_from_file | length > 0
+  tags: install_packages_from_file
+
+# Install packages from repository
+- name: Install | system packages
+  package:
+    name: "{{ item }}"
+    update_cache: yes
+  loop: "{{ system_packages }}"
+  when: installation_method == "repo"
+  tags: install_packages
+
+# PostgreSQL prepare for install (for Debian based only)
+- block:
+    - name: Install | PostgreSQL | ensure postgresql database-cluster manager package
+      package:
+        name: postgresql-common
+        state: present
+
+    - name: Install | PostgreSQL | disable initializing of a default postgresql cluster
+      replace:
+        path: /etc/postgresql-common/createcluster.conf
+        replace: create_main_cluster = false
+        regexp: ^#?create_main_cluster.*$
+
+    - name: Install | PostgreSQL | disable log rotation with logrotate for postgresql (use logging_collector)
+      file:
+        dest: /etc/logrotate.d/postgresql-common
+        state: absent
+  when: installation_method == "repo"
+  tags: install_postgres
+
+# Install PostgreSQL from repository
+- name: Install | PostgreSQL packages
+  package:
+    name: "{{ item }}"
+    update_cache: yes
+    state: present
+  loop: "{{ postgresql_packages }}"
+  when: installation_method == "repo"
+  tags: install_postgres

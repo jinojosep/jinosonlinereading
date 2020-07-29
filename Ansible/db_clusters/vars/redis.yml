@@ -1,0 +1,36 @@
+---
+# redis version
+redis_version: 4.0.9
+redis_download_url: http://download.redis.io/releases/redis-4.0.9.tar.gz
+redis_master_name: redis-primary
+redis_config_file: /etc/redis/redis.conf
+redis_log_file: /var/log/redis/redis.log
+redis_data_dir: /var/lib/redis
+redis_executable: /usr/local/bin/redis-server
+
+REDIS_CONFIG_FILE: "{{ redis_config_file }}"
+REDIS_LOG_FILE: "{{ redis_log_file }}"
+REDIS_DATA_DIR: "{{ redis_data_dir }}"
+REDIS_EXECUTABLE: "{{ redis_executable }}"
+
+redis_cluster_instances:
+  - port: 6379
+    protected_mode: 'no'
+    maxmemory: 5000mb
+    timeout: 86400
+    loglevel: notice
+    persistence_save: ""
+    repl_diskless_sync: 'no'
+    repl_timeout: 60
+    repl_backlog_size: 1mb
+    repl_backlog_ttl: 3600
+    maxmemory_policy: volatile-lru
+    maxmemory_samples: 27
+    cluster_enabled: 'no'
+    cluster_node_timeout: 15000
+    cluster_slave_validity_factor: 10
+    cluster_migration_barrier: 1
+    cluster_require_full_coverage: 'no'
+    client_output_buffer_limit_slave_hard: 256mb
+    client_output_buffer_limit_slave_soft: 64mb
+    client_output_buffer_limit_slave_time: 60

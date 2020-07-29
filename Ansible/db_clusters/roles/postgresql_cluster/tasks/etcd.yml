@@ -1,0 +1,58 @@
+---
+
+# install etcd package from repo
+
+- name: Update repositories cache and install "etcd" package
+  apt:
+    name: etcd
+    update_cache: yes
+    state: present
+
+- name: etcd cluster | generate conf file "/etc/default/etcd"
+  template:
+    src: templates/etcd.conf.j2
+    dest: /etc/default/etcd
+  tags: etcd_conf
+
+
+- name: etcd cluster | start systemd service
+  systemd:
+    daemon_reload: yes
+    name: etcd
+    state: restarted
+    enabled: yes
+  tags: etcd_start
+
+#- name: etcd cluster | enable systemd service
+#  systemd:
+#    name: etcd
+#    enabled: yes
+#  tags: etcd_enable
+
+- name: etcd cluster | wait for port 2379 to become open on the host
+  wait_for:
+    port: 2379
+    host: 127.0.0.1
+    state: started
+    timeout: 120
+    delay: 10
+  ignore_errors: no
+  tags: etcd_start
+
+- block:
+    - name: check etcd cluster health
+      run_once: true
+      command:  etcdctl cluster-health
+      register: etcd_health_result
+      environment:
+        PATH: "{{ ansible_env.PATH }}:/usr/bin:/usr/local/bin"
+      changed_when: false
+
+    - name: Etcd Cluster health
+      run_once: true
+      debug:
+        var: etcd_health_result.stdout_lines
+  ignore_errors: yes
+  tags: etcd_status
+
+

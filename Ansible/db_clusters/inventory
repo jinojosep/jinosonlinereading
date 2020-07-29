@@ -1,0 +1,43 @@
+#ETCD Cluser
+[etcd_cluster]  # recommendation: 3 or 5-7 nodes
+172.31.35.92
+172.31.47.164
+172.31.39.91
+# PostgreSQL nodes
+[master]
+172.31.35.92 hostname=db-node01 
+
+[replica]
+172.31.47.164 hostname=db-node02
+172.31.39.91 hostname=db-node03
+
+[postgres_cluster:children]
+master
+replica
+
+#Mysql Cluster
+[mysql_cluster]
+172.31.35.92 hostname=db-node01
+172.31.47.164 hostname=db-node02
+172.31.39.91 hostname=db-node03
+
+#Redis Cluser
+[redis_master]
+172.31.35.92 hostname=db-node01
+
+[redis_slave]
+172.31.47.164 hostname=db-node02
+172.31.39.91 hostname=db-node03
+
+[redis_cluster:children]
+redis_master
+redis_slave
+
+# Connection settings
+[all:vars]
+ansible_connection='ssh'
+ansible_ssh_port='22'
+ansible_user='ubuntu'
+#ansible_ssh_private_key_file=
+# ansible_python_interpreter='/usr/bin/python3'  
+
