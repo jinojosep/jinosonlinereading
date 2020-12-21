@@ -1,4 +1,5 @@
 <?php
 phpinfo();
-#echo "This is the php info page";
+echo 1
+echo 2
 ?>
